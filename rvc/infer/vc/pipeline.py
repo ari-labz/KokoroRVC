@@ -183,7 +183,14 @@ class Pipeline(object):
             if self.is_half:
                 npy = npy.astype("float32")
 
-            score, ix = index.search(npy, k=8)
+            npy = np.ascontiguousarray(npy, dtype=np.float32)
+            if isinstance(index, str) and index == "numpy":
+                # Exact search in NumPy (ARI): faiss segfaults inside this process on macOS. Squared L2, as faiss returns.
+                d2 = (npy * npy).sum(1, keepdims=True) - 2.0 * npy @ index_vectors.T + (index_vectors * index_vectors).sum(1)[None, :]
+                ix = np.argpartition(d2, 8, axis=1)[:, :8]
+                score = np.maximum(np.take_along_axis(d2, ix, axis=1), 1e-6)
+            else:
+                score, ix = index.search(npy, k=8)
             weight = np.square(1 / score)
             weight /= weight.sum(axis=1, keepdims=True)
             npy = np.sum(index_vectors[ix] * np.expand_dims(weight, axis=2), axis=1)
@@ -276,8 +283,12 @@ class Pipeline(object):
             and index_rate != 0
         ):
             try:
-                index = faiss.read_index(file_index)
-                index_vectors = index.reconstruct_n(0, index.ntotal)
+                if file_index.endswith(".npy"):
+                    # ARI: a plain feature matrix, searched in NumPy (see the search above).
+                    index, index_vectors = "numpy", np.load(file_index).astype(np.float32)
+                else:
+                    index = faiss.read_index(file_index)
+                    index_vectors = index.reconstruct_n(0, index.ntotal)
             except:
                 traceback.print_exc()
                 index = index_vectors = None
