@@ -119,7 +119,14 @@ def main():
 
     # The data steps only run once per voice; a resumed run goes straight to training.
     if not glob.glob(os.path.join(exp_dir, "3_feature768", "*.npy")):
-        step("Preparing clips", ["train/preprocess.py", a.audio_dir, "40000", n_cpu, exp_dir, "False", "3.7"])
+        # RVC tries to open every file in the folder as audio, so hand it the audio alone (transcripts often come along).
+        audio_only = os.path.join(exp_dir, "_audio")
+        shutil.rmtree(audio_only, ignore_errors=True)
+        os.makedirs(audio_only)
+        for f in os.listdir(a.audio_dir):
+            if os.path.splitext(f)[1].lower() in (".wav", ".mp3", ".flac", ".ogg"):
+                os.symlink(os.path.join(os.path.abspath(a.audio_dir), f), os.path.join(audio_only, f))
+        step("Preparing clips", ["train/preprocess.py", audio_only, "40000", n_cpu, exp_dir, "False", "3.7"])
         step("Extracting pitch", ["train/dataset/extract_f0.py", "cpu", exp_dir, n_cpu, "rmvpe"])
         step("Extracting speech features", ["train/dataset/extract_hubert_feature.py", "cpu", "1", "0", exp_dir, "v2", "False"])
 
