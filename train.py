@@ -97,8 +97,9 @@ def main():
             with open(path, "w") as f:
                 json.dump(settings, f, indent=2)
 
-    def export(info):
-        # Turns the latest training checkpoint into a playable voice (model.pth), as RVC does at the end of training.
+    def export(info, dest="model.pth"):
+        # Turns the latest training checkpoint into a playable voice (model.pth, or a named copy), as RVC does at the
+        # end of training.
         ckpt = os.path.join(exp_dir, "G_2333333.pth")
         if not os.path.exists(ckpt):
             return
@@ -108,9 +109,10 @@ def main():
         subprocess.run([PY, "-c", code], cwd=RVC_DIR, env=env, capture_output=True)
         out = os.path.join(RVC_DIR, "assets", "weights", exp + "_export.pth")
         if os.path.exists(out):
-            shutil.copy(out, os.path.join(a.voice_dir, "model.pth"))
-            save_features()
-            log(f"Exported {info} as a playable voice.")
+            shutil.copy(out, os.path.join(a.voice_dir, dest))
+            if dest == "model.pth":
+                save_features()
+            log(f"Exported {info} as a playable voice{'' if dest == 'model.pth' else ': ' + dest}.")
 
     if a.retrain and os.path.isdir(exp_dir):
         shutil.rmtree(exp_dir)
@@ -161,6 +163,9 @@ def main():
         if m := epoch_rx.search(line):
             ep = int(m.group(1))
             log(f"Epoch [{ep}/{a.epochs}]")
+            # RVC keeps only its latest checkpoint, so keep a playable copy of every save, named by epoch, to compare later.
+            if paused["saved"]:
+                export(f"epoch {ep}", f"{a.name}_epoch{ep}.pth")
             if sums:
                 gen, fm, mel, kl = (round(sum(c) / len(c), 4) for c in zip(*sums))
                 # The control panel's chart has four slots named after StyleTTS2's losses; it relabels them per engine.

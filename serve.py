@@ -64,11 +64,12 @@ def _settings():
         return {}
 
 
-def _load_rvc(voice_dir):
-    model = os.path.join(voice_dir, "model.pth")
+def _load_rvc(voice_dir, model_file="model.pth"):
+    # model_file is model.pth (the latest) or one of the per-save copies, "<voice>_epoch<N>.pth".
+    model = os.path.join(voice_dir, model_file)
     state["voice_dir"], state["vc"], state["index"] = voice_dir, None, ""
     if not os.path.exists(model):
-        sys.stderr.write(f"[KokoroRVC] no model.pth in {voice_dir}: speaking plain Kokoro until one is trained\n")
+        sys.stderr.write(f"[KokoroRVC] no {model_file} in {voice_dir}: speaking plain Kokoro until one is trained\n")
         return
     from configs.config import Config
     from infer.vc.modules import VC
@@ -80,12 +81,12 @@ def _load_rvc(voice_dir):
     os.environ["weight_root"] = voice_dir
     os.environ["rmvpe_root"] = os.path.join(RVC_DIR, "assets", "rmvpe")
     vc = VC(cfg)
-    vc.get_vc("model.pth")
+    vc.get_vc(model_file)
     state["vc"] = vc
     # The voice's training features, searched in NumPy (RVC's faiss index segfaults inside this process on macOS).
     feats = os.path.join(voice_dir, "model_features.npy")
     state["index"] = feats if os.path.exists(feats) else ""
-    sys.stderr.write(f"[KokoroRVC] loaded RVC voice from {voice_dir}\n")
+    sys.stderr.write(f"[KokoroRVC] loaded RVC voice {model_file} from {voice_dir}\n")
 
 
 _kokoro_f0 = {}
@@ -151,10 +152,13 @@ def info():
 
 @app.route("/load_model", methods=["POST"])
 def load_model():
-    path = (request.json or {}).get("model_path", "")
-    voice_dir = path if os.path.isdir(path) else os.path.dirname(path)
+    d = request.json or {}
+    path = d.get("path") or d.get("model_path", "")   # ARI sends "path", as StyleTTS2 reads it
     with lock:
-        _load_rvc(voice_dir)
+        if os.path.isdir(path):
+            _load_rvc(path)
+        else:
+            _load_rvc(os.path.dirname(path), os.path.basename(path))
     return jsonify({"ok": True, "rvc": state["vc"] is not None})
 
 
@@ -226,6 +230,7 @@ def start_train():
     if d.get("retrain"):
         cmd.append("--retrain")
     train["args"] = [c for c in cmd if c != "--retrain"]   # resume never wipes
+    train["voice_dir"] = d["voice_dir"]   # where train.py looks for the pause request, not this server's own voice
     train["log"].clear()
     _launch(cmd)
     return jsonify({"ok": True})
@@ -249,7 +254,7 @@ def _stop():
 
 
 def _sentinel():
-    return os.path.join(state["voice_dir"], ".stop_training")
+    return os.path.join(train.get("voice_dir") or state["voice_dir"], ".stop_training")
 
 
 @app.route("/train/pause", methods=["POST"])
